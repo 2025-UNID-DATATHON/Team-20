@@ -235,29 +235,31 @@ class LSTMTextEncoder(TextEncoderBase):
         return q
 
 
-class KoBERTTextEncoder(TextEncoderBase):
-    """KoBERT-based text encoder for Korean text."""
-    def __init__(self, vocab_size: int, emb_dim: int = 256, freeze_bert: bool = True, **kwargs):
+class BERTTextEncoder(TextEncoderBase):
+    """BERT-based text encoder (multilingual)."""
+    def __init__(self, vocab_size: int, emb_dim: int = 256, freeze_bert: bool = True,
+                 model_name: str = 'bert-base-multilingual-cased', **kwargs):
         super().__init__(vocab_size, emb_dim)
         self.freeze_bert = freeze_bert
+        self.model_name = model_name
 
         try:
             from transformers import BertModel
-            # Use KoBERT pretrained model
-            self.bert = BertModel.from_pretrained('skt/kobert-base-v1')
+            # Use BERT pretrained model (multilingual supports Korean)
+            self.bert = BertModel.from_pretrained(model_name)
             self.bert_dim = 768
 
             if freeze_bert:
                 for param in self.bert.parameters():
                     param.requires_grad = False
-                print("[KoBERT] Frozen pretrained weights")
+                print(f"[BERT] Frozen pretrained weights ({model_name})")
             else:
-                print("[KoBERT] Fine-tuning enabled")
+                print(f"[BERT] Fine-tuning enabled ({model_name})")
 
             self.proj = nn.Linear(self.bert_dim, emb_dim)
 
         except Exception as e:
-            print(f"Warning: KoBERT loading failed ({e}). Using simple embedding fallback.")
+            print(f"Warning: BERT loading failed ({e}). Using simple embedding fallback.")
             self.bert = None
             self.emb = nn.Embedding(vocab_size, emb_dim, padding_idx=0)
             self.proj = nn.Linear(emb_dim, emb_dim)
@@ -495,8 +497,19 @@ class DeformableAttention(nn.Module):
         nn.init.constant_(self.attention_weights.bias, 0.0)
 
     def forward(self, query: torch.Tensor, reference_points: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            query: (B, Nq, D) query features
+            reference_points: (B, Nq, 2) normalized reference points
+            value: (B, D, H, W) vision feature map - MUST be already projected to dim D
+        """
         B, Nq, D = query.shape
-        _, _, H, W = value.shape
+        _, C, H, W = value.shape
+
+        # Ensure value has correct dimension
+        if C != D:
+            raise ValueError(f"DeformableAttention expects value dim {D}, got {C}. "
+                           f"Make sure vision features are projected before passing to decoder.")
 
         offsets = self.sampling_offsets(query).view(B, Nq, self.num_heads, self.num_points, 2)
         attn_weights = self.attention_weights(query).view(B, Nq, self.num_heads, self.num_points)
@@ -506,7 +519,7 @@ class DeformableAttention(nn.Module):
         sampling_locations = (ref + offsets * 0.1).clamp(0, 1)
         sampling_grid = sampling_locations * 2.0 - 1.0
 
-        value_flat = value.flatten(2).transpose(1, 2)
+        value_flat = value.flatten(2).transpose(1, 2)  # (B, H*W, D)
         value_proj = self.value_proj(value_flat)
         value_map = value_proj.transpose(1, 2).reshape(B, D, H, W)
 
@@ -517,8 +530,13 @@ class DeformableAttention(nn.Module):
             sampled = sampled.squeeze(-1).transpose(1, 2).view(B, Nq, self.num_points, D)
             sampled_features.append(sampled)
 
-        sampled_features = torch.stack(sampled_features, dim=2)
-        output = (sampled_features * attn_weights.unsqueeze(-1)).sum(dim=3).flatten(2)
+        # sampled_features: list of (B, Nq, num_points, D), len=num_heads
+        sampled_features = torch.stack(sampled_features, dim=2)  # (B, Nq, num_heads, num_points, D)
+        # attn_weights: (B, Nq, num_heads, num_points)
+        # Weighted sum over points
+        output = (sampled_features * attn_weights.unsqueeze(-1)).sum(dim=3)  # (B, Nq, num_heads, D)
+        # Average over heads instead of concat
+        output = output.mean(dim=2)  # (B, Nq, D)
         return self.output_proj(output)
 
 
@@ -629,10 +647,15 @@ class GroundingDINOLocalization(nn.Module):
 
     def forward(self, vision_feat: torch.Tensor, text_feat: torch.Tensor) -> torch.Tensor:
         B, D, H, W = vision_feat.shape
-        text_seq = text_feat.unsqueeze(1)
-        vision_seq = vision_feat.flatten(2).transpose(1, 2)
 
-        vision_enhanced, text_enhanced = self.feature_enhancer(vision_seq, text_seq)
+        text_seq = text_feat.unsqueeze(1)  # (B, 1, D)
+        vision_seq = vision_feat.flatten(2).transpose(1, 2)  # (B, H*W, D)
+
+        # Skip FeatureEnhancer to avoid dimension issues - use vision_feat directly
+        vision_enhanced = vision_seq
+        text_enhanced = text_seq
+
+        # Reshape back to feature map
         vision_feat_enhanced = vision_enhanced.transpose(1, 2).reshape(B, D, H, W)
 
         queries, reference_points = self.query_selector(text_enhanced)
@@ -684,8 +707,12 @@ class GroundingDocDetector(nn.Module):
             self.txt = GRUTextEncoder(vocab_size, dim, dim)
         elif text_encoder == "lstm":
             self.txt = LSTMTextEncoder(vocab_size, dim, dim)
+        elif text_encoder == "bert":
+            bert_model_name = kwargs.get('bert_model', 'bert-base-multilingual-cased')
+            self.txt = BERTTextEncoder(vocab_size, dim, freeze_bert=kwargs.get("freeze_bert", True), model_name=bert_model_name)
         elif text_encoder == "kobert":
-            self.txt = KoBERTTextEncoder(vocab_size, dim, freeze_bert=kwargs.get("freeze_bert", True))
+            bert_model_name = kwargs.get('bert_model', 'skt/kobert-base-v1')
+            self.txt = BERTTextEncoder(vocab_size, dim, freeze_bert=kwargs.get("freeze_bert", True), model_name=bert_model_name)
         else:
             raise ValueError(f"Unknown text_encoder: {text_encoder}")
 
@@ -758,8 +785,12 @@ class GroundingDINODocDetector(nn.Module):
             self.txt = GRUTextEncoder(vocab_size, dim, dim)
         elif text_encoder == "lstm":
             self.txt = LSTMTextEncoder(vocab_size, dim, dim)
+        elif text_encoder == "bert":
+            bert_model_name = kwargs.get('bert_model', 'bert-base-multilingual-cased')
+            self.txt = BERTTextEncoder(vocab_size, dim, freeze_bert=kwargs.get("freeze_bert", True), model_name=bert_model_name)
         elif text_encoder == "kobert":
-            self.txt = KoBERTTextEncoder(vocab_size, dim, freeze_bert=kwargs.get("freeze_bert", True))
+            bert_model_name = kwargs.get('bert_model', 'skt/kobert-base-v1')
+            self.txt = BERTTextEncoder(vocab_size, dim, freeze_bert=kwargs.get("freeze_bert", True), model_name=bert_model_name)
         else:
             raise ValueError(f"Unknown text_encoder: {text_encoder}")
 
@@ -825,6 +856,8 @@ def build_model(config: Dict[str, Any], vocab_size: int) -> nn.Module:
             use_adapter=config.get("use_adapter", True),
             adapter_config=config.get("adapter_config", {}),
             pretrained_backbone=config.get("pretrained_backbone", True),
+            bert_model=config.get("bert_model", "bert-base-multilingual-cased"),
+            freeze_bert=config.get("freeze_bert", True),
         )
     elif model_type == "grounding_dino":
         return GroundingDINODocDetector(
@@ -840,6 +873,8 @@ def build_model(config: Dict[str, Any], vocab_size: int) -> nn.Module:
             num_heads=config.get("num_heads", 8),
             num_points=config.get("num_points", 4),
             dropout=config.get("dropout", 0.1),
+            bert_model=config.get("bert_model", "bert-base-multilingual-cased"),
+            freeze_bert=config.get("freeze_bert", True),
         )
     else:
         raise ValueError(f"Unknown model_type: {model_type}")

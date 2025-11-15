@@ -117,29 +117,61 @@ def train_loop(config: Dict[str, Any], args):
 
     # Data
     print("[Data] Building dataset and vocab...")
-    train_ds, train_dl = make_loader(
-        json_dir=config["data"]["train_json_dir"],
-        jpg_dir=config["data"]["train_jpg_dir"],
-        vocab=None,
-        build_vocab=True,
-        batch_size=config["training"]["batch_size"],
-        img_size=config["data"]["img_size"],
-        num_workers=config["data"]["num_workers"],
-        shuffle=True
-    )
 
-    # Resolve vocab (handle Subset wrapper)
-    if isinstance(train_ds, Subset):
-        vocab = train_ds.dataset.vocab
+    # Check if using multiple directories (report + press)
+    if "train_json_dirs" in config["data"]:
+        # Multiple directories
+        result = make_loader(
+            json_dirs=config["data"]["train_json_dirs"],
+            jpg_dirs=config["data"]["train_jpg_dirs"],
+            vocab=None,
+            build_vocab=True,
+            batch_size=config["training"]["batch_size"],
+            img_size=config["data"]["img_size"],
+            num_workers=config["data"]["num_workers"],
+            shuffle=True
+        )
+        train_ds, train_dl, vocab = result
     else:
-        vocab = train_ds.vocab
+        # Single directory (backward compatibility)
+        train_ds, train_dl = make_loader(
+            json_dir=config["data"]["train_json_dir"],
+            jpg_dir=config["data"]["train_jpg_dir"],
+            vocab=None,
+            build_vocab=True,
+            batch_size=config["training"]["batch_size"],
+            img_size=config["data"]["img_size"],
+            num_workers=config["data"]["num_workers"],
+            shuffle=True
+        )
+
+        # Resolve vocab (handle Subset wrapper)
+        if isinstance(train_ds, Subset):
+            vocab = train_ds.dataset.vocab
+        else:
+            vocab = train_ds.vocab
 
     print(f"[Vocab] Size: {len(vocab)}")
     print(f"[Data] Train samples: {len(train_ds)}")
 
     # Validation data
     val_dl = None
-    if "val_json_dir" in config["data"]:
+    if "val_json_dirs" in config["data"]:
+        # Multiple directories
+        print("[Data] Building validation dataset...")
+        val_ds, val_dl = make_loader(
+            json_dirs=config["data"]["val_json_dirs"],
+            jpg_dirs=config["data"]["val_jpg_dirs"],
+            vocab=vocab,
+            build_vocab=False,
+            batch_size=config["training"]["batch_size"],
+            img_size=config["data"]["img_size"],
+            num_workers=config["data"]["num_workers"],
+            shuffle=False
+        )
+        print(f"[Data] Validation samples: {len(val_ds)}")
+    elif "val_json_dir" in config["data"]:
+        # Single directory
         print("[Data] Building validation dataset...")
         val_ds, val_dl = make_loader(
             json_dir=config["data"]["val_json_dir"],

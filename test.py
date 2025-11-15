@@ -94,9 +94,12 @@ def evaluate_loop(config: Dict[str, Any], args):
     # Inference
     rows = []
     ious = []
+    print(f"[Inference] Starting evaluation for {len(eval_ds)} samples...")
+    print(f"[Inference] Batch size: {batch_size}")
+    total_batches = len(eval_dl)
 
     with torch.no_grad():
-        for imgs, ids, lens, targets, meta in eval_dl:
+        for batch_idx, (imgs, ids, lens, targets, meta) in enumerate(eval_dl):
             imgs = imgs.to(device)
             ids = ids.to(device)
             lens = lens.to(device)
@@ -138,6 +141,12 @@ def evaluate_loop(config: Dict[str, Any], args):
                     rows[-1]["gt_w"] = gw
                     rows[-1]["gt_h"] = gh
                     rows[-1]["iou"] = iou
+
+            # Progress update every 10 batches
+            if (batch_idx + 1) % 10 == 0 or (batch_idx + 1) == total_batches:
+                processed = len(rows)
+                avg_iou = np.mean(ious) if ious else 0.0
+                print(f"[Progress] Batch {batch_idx + 1}/{total_batches} | Processed {processed}/{len(eval_ds)} samples | Avg IoU: {avg_iou:.4f}")
 
     # Save results
     out_csv = args.out_csv or config["eval"]["out_csv"]
@@ -189,9 +198,12 @@ def predict_loop(config: Dict[str, Any], args):
 
     # Inference
     rows = []
+    print(f"[Inference] Starting prediction for {len(test_ds)} samples...")
+    print(f"[Inference] Batch size: {batch_size}")
+    total_batches = len(test_dl)
 
     with torch.no_grad():
-        for imgs, ids, lens, targets, meta in test_dl:
+        for batch_idx, (imgs, ids, lens, targets, meta) in enumerate(test_dl):
             imgs = imgs.to(device)
             ids = ids.to(device)
             lens = lens.to(device)
@@ -216,6 +228,11 @@ def predict_loop(config: Dict[str, Any], args):
                     "pred_w": w,
                     "pred_h": h
                 })
+
+            # Progress update every 10 batches
+            if (batch_idx + 1) % 10 == 0 or (batch_idx + 1) == total_batches:
+                processed = len(rows)
+                print(f"[Progress] Batch {batch_idx + 1}/{total_batches} | Processed {processed}/{len(test_ds)} samples")
 
     # Save results
     out_csv = args.out_csv or config["predict"]["out_csv"]

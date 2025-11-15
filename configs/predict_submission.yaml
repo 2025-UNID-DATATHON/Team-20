@@ -1,0 +1,16 @@
+# Prediction Configuration for Submission
+# Using grounding_dino_gpu_max_best.pth checkpoint
+
+seed: 42
+
+# Data Configuration
+data:
+  img_size: 640
+  num_workers: 4
+
+# Prediction Configuration
+predict:
+  json_dir: "/home/work/CUAI_DATA/황민아/Team-20/open/test/query"
+  jpg_dir: "/home/work/CUAI_DATA/황민아/Team-20/open/test/images"
+  batch_size: 64
+  out_csv: "outputs/submission.csv"
