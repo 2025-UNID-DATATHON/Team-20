@@ -69,9 +69,14 @@ def find_jsons(json_dir: str) -> List[str]:
         return sorted(glob(os.path.join(json_dir, "*.json")))
     raise FileNotFoundError(f"json_dir not found: {json_dir}")
 
-def read_json(path: str) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+def read_json(path: str):
+    import json
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"[WARN] Invalid JSON, skip: {path} ({e})")
+        return None
 
 def get_image_path(json_path: str, data: Dict[str, Any], jpg_dir: str = None) -> str:
     src = data.get("source_data_info", {})
@@ -107,6 +112,8 @@ class UniDSet(Dataset):
         for jf in json_files:
             # print(jf) # 너무 많은 로그를 출력하므로 주석 처리
             data = read_json(jf)
+            if data is None:
+                continue  # 깨진 파일은 그냥 스킵
             ann = data.get("learning_data_info", {}).get("annotation", [])
             img_path = get_image_path(jf, data, jpg_dir=jpg_dir)
             for a in ann:
