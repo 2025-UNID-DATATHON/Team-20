@@ -1,0 +1,62 @@
+# GPU Optimized Training Configuration
+# Designed to maximize GPU utilization
+
+seed: 42
+
+# Data Configuration
+data:
+  train_json_dir: "/home/work/CUAI_DATA/김현수/train_valid/train/report_json"
+  train_jpg_dir: "/home/work/CUAI_DATA/김현수/train_valid/train/report_jpg"
+  val_json_dir: "/home/work/CUAI_DATA/김현수/train_valid/valid/report_json"
+  val_jpg_dir: "/home/work/CUAI_DATA/김현수/train_valid/valid/report_jpg"
+  img_size: 640  # Larger image size for better performance
+  num_workers: 8  # Increased for GPU utilization
+
+# Model Configuration
+model:
+  model_type: "grounding_dino"  # GroundingDINO for better performance
+  dim: 256
+  text_encoder: "kobert"  # KoBERT for Korean text
+  vision_encoder: "resnet50"  # ResNet50 for better features
+  pretrained_backbone: true
+  freeze_bert: false  # Fine-tune BERT for better performance
+  freeze_vision_encoder: false  # Fine-tune vision encoder
+  freeze_text_encoder: false
+  use_adapter: true
+  adapter_config:
+    reduction: 4
+  num_queries: 100
+  num_decoder_layers: 6
+  num_heads: 8
+  num_points: 4
+  dropout: 0.1
+
+# Training Configuration - GPU Optimized
+training:
+  batch_size: 16  # Increased batch size for GPU
+  gradient_accumulation_steps: 2  # Effective batch size = 16 * 2 = 32
+  epochs: 50
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  adapter_lr_scale: 2.0  # Higher LR for adapter
+  use_amp: true  # Mixed precision training
+  use_giou_loss: true  # Use GIoU loss instead of L1 loss
+  grad_clip: 1.0  # Gradient clipping
+  save_ckpt: "checkpoints/grounding_dino_gpu_optimized.pth"
+  save_interval: 5
+  eval_interval: 1  # Evaluate every epoch
+  early_stopping_patience: 10
+
+# Evaluation Configuration
+eval:
+  json_dir: "/home/work/CUAI_DATA/김현수/train_valid/valid/report_json"
+  jpg_dir: "/home/work/CUAI_DATA/김현수/train_valid/valid/report_jpg"
+  batch_size: 32  # Larger batch size for evaluation
+  out_csv: "results/val_predictions.csv"
+
+# Prediction Configuration
+predict:
+  json_dir: "test/query"
+  jpg_dir: "test/images"
+  batch_size: 32
+  out_csv: "results/submission.csv"
